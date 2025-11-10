@@ -1,0 +1,20 @@
+# python venv
+venv/
+
+# pyton cache
+__pycache__/
+*.pyc
+
+# audio i nagrania
+*.npy
+*.wav
+*.mp3
+
+# ml modele
+*.pkl
+*.pt
+*.pth
+*.npz
+
+# ide / pliki edytorow
+.vscode/

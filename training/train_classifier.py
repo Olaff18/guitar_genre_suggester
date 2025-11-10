@@ -21,6 +21,7 @@ def record_clip(filename, seconds=DURATION):
     print(f"Saved recording to {filename}")
 
 
+
 # bierze .npy (raw waveform) i zamienia w zbiory cyferek reprezentujace dzwieki
 def extract_features_np(audio_np, sr=SR):
     y = audio_np.flatten() # .npy mze byc 2D wiec spłaszczamy do 1D
@@ -57,3 +58,7 @@ def train():
     clf.fit(X, y)
     joblib.dump(clf, "genre_classifier.pkl") # zapisujemy model
     print("zapisujemy model do pliku genre_classifier.pkl")
+
+if __name__ == "__main__":
+    collect_samples()
+    train()
