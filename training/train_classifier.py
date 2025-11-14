@@ -35,9 +35,9 @@ def extract_features_np(audio_np, sr=SR):
     return [centroid, rms, zcr, bandwidth]
 
 def collect_samples():
-    print("Recordujemy 3 clipy per gatunek: ")
+    print("Recordujemy 5 clipy per gatunek: ")
     for g in GENRES:
-        for i in range(3):
+        for i in range(5):
             fname = f"{OUT}/{g}_{i}.npy"
             input(f"Nagrywamy {g} clip #{i+1}. Klik enter i gramy...")
             record_clip(fname)

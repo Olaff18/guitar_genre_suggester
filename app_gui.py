@@ -10,13 +10,61 @@ import PySimpleGUI  as sg
 import librosa
 
 # probujemy zimportowac nam model
-try:
-    # na razie nie odpala nam
-    from neural_amp_modeler import NeuralAmpModel
-    NAM_AVAILABLE = True
-except Exception:
-    NAM_AVAILABLE = False
-    print("NAM runtime not found. NAM processing will be bypassed.")
+from pedalboard import Pedalboard, VST3Plugin
+
+VST_PATH = r"C:\Program Files\Common Files\VST3\NeuralAmpModeler.vst3"
+# NAM_MODEL = r"C:\path\to\your\model.nam"
+
+def create_nam_instance(model_path):
+    try:
+        plugin = VST3Plugin(VST_PATH)
+
+        # Load the NAM model by setting the parameter, OR loading plugin state.
+        # First check if the parameter exists:
+        if "ModelPath" in plugin.parameters:
+            plugin.parameters["ModelPath"] = model_path
+            print("Loaded NAM model into VST:", model_path)
+        else:
+            print("⚠ NAM plugin does not expose ModelPath parameter. Trying load_state...")
+            try:
+                with open(model_path, "rb") as f:
+                    data = f.read()
+                plugin.load_state(data)
+                print("Loaded model via load_state()")
+            except Exception as e:
+                print("FAILED to load model:", e)
+
+        return plugin
+
+    except Exception as e:
+        print("NAM VST load error:", e)
+        return None
+
+
+class NAMWrapper:
+    def __init__(self):
+        self.plugin = None
+
+    def load(self, path):
+        if path is None:
+            self.plugin = None
+            return
+
+        self.plugin = create_nam_instance(path)
+
+    def process(self, audio_block):
+        if self.plugin is None:
+            return audio_block
+
+        try:
+            # pedalboard wants shape: (samples, channels)
+            block = audio_block.astype(np.float32).reshape(-1, 1)
+            out = self.plugin.process(block, SR)
+            return out.flatten()
+        except Exception as e:
+            print("NAM processing failed:", e)
+            return audio_block
+
 
 SR = 44100
 BLOCK = 2048             # block size for callback
@@ -91,7 +139,7 @@ class NAMWrapper:
             return
         
         try:
-            self.model = NeuralAmpModel.load(path)
+            # self.model = NeuralAmpModel.load(path)
             print("Loaded NAM model", path)
         except Exception as e:
             print("Error loading NAM model:", e)
