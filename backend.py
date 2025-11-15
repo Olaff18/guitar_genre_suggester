@@ -1,4 +1,3 @@
-# backend.py
 import os
 import tempfile
 import time
@@ -10,10 +9,9 @@ import queue
 import sounddevice as sd
 import joblib
 import librosa
-import soundfile as sf
 from pedalboard import Pedalboard, Distortion, Gain, Reverb, LowpassFilter, HighpassFilter, Convolution, Chorus
 
-# --- EFFECT CHAINS ---
+# -------- EFFECT BOARDS --------
 
 doom_board = Pedalboard([
     HighpassFilter(70),
@@ -38,24 +36,15 @@ bossa_board = Pedalboard([
     Convolution("irs/shoegaze_ir.wav")
 ])
 
-# metal_board = Pedalboard([
-#     HighpassFilter(140),
-#     Gain(gain_db=12),
-#     Distortion(drive_db=45),
-#     LowpassFilter(9000),
-#     Convolution("irs/mesa_4x12.wav")
-# ])
-
-# connect genre names → boards
 effect_chains = {
     "doom": doom_board,
     "punk": punk_board,
     "bossa_nova": bossa_board,
-    # "metal": metal_board
 }
 
 
-# konfig
+# -------- FLASK + CONFIG --------
+
 app = Flask(__name__)
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
@@ -64,7 +53,6 @@ BLOCK = 2048
 CLASSIFY_WINDOW = 1.0
 CHANNELS = 1
 
-# laduje model klasyfikatora
 clf = joblib.load("genre_classifier.pkl")
 
 # global state
@@ -72,40 +60,43 @@ processing_state = {
     "current_genre": " ",
     "level": 0.0,
     "live_mode": False,
-    "last_file_result": {"genre" : " " }
+    "last_file_result": {"genre": " "},
+
+    # new:
+    "collecting": False,         # during the 5-second analysis
+    "locked_genre": None,        # selected effect after analysis
+    "collect_time_left": 0       # countdown for UI
 }
+
+recognition_buffer = []
+COLLECT_DURATION = 8
 
 q = queue.Queue(maxsize=40)
 
-# ekstrakcja cech
+# -------- FEATURE EXTRACTION --------
 def extract_features_block(block, sr=SR):
     y = block.flatten().astype(np.float32)
-
     if y.size == 0:
         return None
     
     if len(y) < 2048:
         y = np.pad(y, (0, 2048 - len(y)))
 
-    # staty dla extrakcji cech
     def stats(x):
         return [np.mean(x), np.std(x), np.median(x)]
 
-    centroid = stats(librosa.feature.spectral_centroid(y=y, sr=sr)[0]) # czyli srodek masy spektrum czyli dzwiek jest wysoki czy niski
-    rms = stats(librosa.feature.rms(y=y)[0]) # root mean square czyli glosnosc dzwieku czyli jego energia 
-    zcr = stats(librosa.feature.zero_crossing_rate(y=y)[0]) # zero crossing rate czyli ilosc zmian znaku w sygnale czyli szumowatosc dzwieku
-    bandwidth = stats(librosa.feature.spectral_bandwidth(y=y, sr=sr)[0]) # szerokosc pasma czyli jak szerokie sa czestotliwosci w dzwieku
+    centroid = stats(librosa.feature.spectral_centroid(y=y, sr=sr)[0])
+    rms = stats(librosa.feature.rms(y=y)[0])
+    zcr = stats(librosa.feature.zero_crossing_rate(y=y)[0])
+    bandwidth = stats(librosa.feature.spectral_bandwidth(y=y, sr=sr)[0])
 
-    # MFCC czyli wspolczynniki cepstralne mel czyli jak ludzkie ucho odbiera dzwiek
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     mfcc_means = np.mean(mfcc, axis=1)
     mfcc_stds = np.std(mfcc, axis=1)
 
-    # kontrast spektralny czyli roznice miedzy pasmami czestotliwosci czyli sa dobrze oddzielone
     contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
     contrast_means = np.mean(contrast, axis=1)
 
-    # rolloff czyli ksztalt spektrum czyli wysokie czestotliwosci
     roll = stats(librosa.feature.spectral_rolloff(y=y, sr=sr)[0])
 
     return np.concatenate([
@@ -115,7 +106,8 @@ def extract_features_block(block, sr=SR):
         roll
     ])
 
-#thread processing audio blocks
+
+# -------- BACKGROUND CLASSIFIER THREAD --------
 def processing_thread():
     buffer = np.zeros(int(SR * CLASSIFY_WINDOW), dtype=np.float32)
 
@@ -133,16 +125,19 @@ def processing_thread():
         try:
             genre = clf.predict([feat])[0]
             processing_state["current_genre"] = genre
+
+            if processing_state["collecting"]:
+                recognition_buffer.append(genre)
+
         except:
             pass
 
         rms_val = np.sqrt(np.mean(buffer**2))
         processing_state["level"] = float(rms_val)
 
-thread = Thread(target=processing_thread, daemon=True)
-thread.start()
+Thread(target=processing_thread, daemon=True).start()
 
-#tu stream audio
+# -------- AUDIO STREAM --------
 stream = None
 
 def audio_callback(indata, outdata, frames, time_info, status):
@@ -152,27 +147,27 @@ def audio_callback(indata, outdata, frames, time_info, status):
         except queue.Full:
             pass
 
-    # outdata[:] = indata  # passthrough monitoring
-    genre = processing_state["current_genre"]
+    # If no locked effect → clean
+    if processing_state["locked_genre"] is None:
+        outdata[:] = indata
+        return
 
-    if processing_state["live_mode"] and genre in effect_chains:
-        chain = effect_chains[genre]
+    genre = processing_state["locked_genre"]
+
+    if genre in effect_chains:
         try:
-            processed = chain(indata.copy(), SR)
+            processed = effect_chains[genre](indata.copy(), SR)
             outdata[:] = processed
-        except Exception as e:
-            print("Effect error:", e)
+        except:
             outdata[:] = indata
     else:
         outdata[:] = indata
-        
 
 
 def start_audio():
     global stream
     if stream is not None:
         return
-
     stream = sd.Stream(
         samplerate=SR,
         blocksize=BLOCK,
@@ -181,20 +176,55 @@ def start_audio():
     )
     stream.start()
 
-#api routes
+# -------- TIMER TO END ANALYSIS --------
+def finish_collect_timer():
+    for t in range(COLLECT_DURATION, 0, -1):
+        processing_state["collect_time_left"] = t
+        time.sleep(1)
+
+    processing_state["collect_time_left"] = 0
+    processing_state["collecting"] = False
+
+    if len(recognition_buffer) > 0:
+        processing_state["locked_genre"] = max(set(recognition_buffer), key=recognition_buffer.count)
+    else:
+        processing_state["locked_genre"] = None
+
+
+# -------- API ROUTES --------
+
 @app.post("/enable_live")
 def enable_live():
     processing_state["live_mode"] = True
+
+    processing_state["collecting"] = True
+    processing_state["locked_genre"] = None
+    recognition_buffer.clear()
+
+    Thread(target=finish_collect_timer, daemon=True).start()
+
     start_audio()
     return jsonify({"ok": True})
+
 
 @app.post("/disable_live")
 def disable_live():
     processing_state["live_mode"] = False
+    processing_state["collecting"] = False
+    processing_state["locked_genre"] = None
     processing_state["current_genre"] = " "
     processing_state["level"] = 0.0
-    # result = {"genre": " "}
     return jsonify(processing_state)
+
+
+@app.post("/reset_effect")
+def reset_effect():
+    processing_state["locked_genre"] = None
+    processing_state["collecting"] = False
+    recognition_buffer.clear()
+    processing_state["current_genre"] = " "
+    return jsonify({"ok": True})
+
 
 @app.post("/classify_file")
 def classify_file():
@@ -213,15 +243,16 @@ def classify_file():
         result = {"genre": genre}
         processing_state["last_file_result"] = result
         return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
     finally:
         try: os.remove(tmp)
         except: pass
 
+
 @app.get("/state")
 def state():
     return jsonify(processing_state)
+
 
 @app.get("/")
 def index():

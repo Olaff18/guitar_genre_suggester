@@ -45,6 +45,12 @@ button {
     cursor: pointer;
 }
 button:hover { background: #333; }
+
+#analyzing {
+    font-size: 28px;
+    color: #00eaff;
+    margin-top: 10px;
+}
 </style>
 </head>
 <body>
@@ -54,8 +60,11 @@ button:hover { background: #333; }
 
     <button onclick="startLive()">Start Live Guitar Mode</button>
     <button onclick="stopLive()">Stop Live Mode</button>
+    <button onclick="resetEffect()">Reset Effect</button>
 
-    <div class="genre" id="genre">Live: </div>
+    <div id="analyzing"> </div>
+
+    <div class="genre" id="genre">Live: —</div>
 
     <div class="levelbar">
         <div class="level" id="level"></div>
@@ -76,35 +85,57 @@ function updateUI() {
     fetch("/state")
         .then(r => r.json())
         .then(state => {
-            // show live genre
-            document.getElementById("genre").innerText =
-                "Live: " + (state.current_genre || "—");
 
+            // analyzing UI
+            if (state.collecting) {
+                document.getElementById("analyzing").innerText =
+                    "Analyzing: " + state.collect_time_left + "s…";
+            } else {
+                document.getElementById("analyzing").innerText = "";
+            }
+
+            // if effect is locked → show it
+            if (state.locked_genre) {
+                document.getElementById("genre").innerText =
+                    "Effect: " + state.locked_genre;
+            } else if (state.collecting) {
+                document.getElementById("genre").innerText =
+                    "Live: (analyzing)";
+            } else {
+                document.getElementById("genre").innerText =
+                    "Live: —";
+            }
+
+            // level bar
             let lvl = Math.min(100, state.level * 300);
             document.getElementById("level").style.width = lvl + "%";
 
-            // show last file result
-            if (state.last_file_result && state.last_file_result.genre)
+            if (state.last_file_result)
                 document.getElementById("fileResult").innerText =
                     "File: " + state.last_file_result.genre;
-            else
-                document.getElementById("fileResult").innerText = "File: —";
         });
 }
-
 
 function startLive() {
-    fetch("/enable_live", {method:"POST"});
+    fetch("/enable_live", { method: "POST" });
 }
+
 function stopLive() {
     fetch("/disable_live", { method: "POST" })
-        .then(res => res.json())
-        .then(state => {
+        .then(r => r.json())
+        .then(_ => {
             document.getElementById("genre").innerText = "Live: —";
             document.getElementById("level").style.width = "0%";
+            document.getElementById("analyzing").innerText = "";
         });
 }
 
+function resetEffect() {
+    fetch("/reset_effect", { method: "POST" })
+        .then(_ => {
+            document.getElementById("genre").innerText = "Live: —";
+        });
+}
 
 function uploadFile() {
     let f = document.getElementById("fileUpload").files[0];
@@ -121,22 +152,6 @@ function uploadFile() {
     .then(res => {
         document.getElementById("fileResult").innerText = "File: " + res.genre;
     });
-}
-
-function updateUI() {
-    fetch("/state")
-        .then(r => r.json())
-        .then(state => {
-            document.getElementById("genre").innerText =
-                "Live: " + (state.current_genre || "—");
-
-            let lvl = Math.min(100, state.level * 300);
-            document.getElementById("level").style.width = lvl + "%";
-
-            if (state.last_file_result)
-                document.getElementById("fileResult").innerText =
-                    "File: " + state.last_file_result.genre;
-        });
 }
 
 setInterval(updateUI, 150);
