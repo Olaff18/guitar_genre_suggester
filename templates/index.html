@@ -71,12 +71,40 @@ button:hover { background: #333; }
 </div>
 
 <script>
+
+function updateUI() {
+    fetch("/state")
+        .then(r => r.json())
+        .then(state => {
+            // show live genre
+            document.getElementById("genre").innerText =
+                "Live: " + (state.current_genre || "—");
+
+            let lvl = Math.min(100, state.level * 300);
+            document.getElementById("level").style.width = lvl + "%";
+
+            // show last file result
+            if (state.last_file_result && state.last_file_result.genre)
+                document.getElementById("fileResult").innerText =
+                    "File: " + state.last_file_result.genre;
+            else
+                document.getElementById("fileResult").innerText = "File: —";
+        });
+}
+
+
 function startLive() {
     fetch("/enable_live", {method:"POST"});
 }
 function stopLive() {
-    fetch("/disable_live", {method:"POST"});
+    fetch("/disable_live", { method: "POST" })
+        .then(res => res.json())
+        .then(state => {
+            document.getElementById("genre").innerText = "Live: —";
+            document.getElementById("level").style.width = "0%";
+        });
 }
+
 
 function uploadFile() {
     let f = document.getElementById("fileUpload").files[0];

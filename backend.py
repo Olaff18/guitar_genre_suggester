@@ -10,6 +10,50 @@ import queue
 import sounddevice as sd
 import joblib
 import librosa
+import soundfile as sf
+from pedalboard import Pedalboard, Distortion, Gain, Reverb, LowpassFilter, HighpassFilter, Convolution, Chorus
+
+# --- EFFECT CHAINS ---
+
+doom_board = Pedalboard([
+    HighpassFilter(70),
+    Distortion(drive_db=40),
+    Gain(gain_db=15),
+    LowpassFilter(3000),
+    Convolution("irs/doom_ir.wav")
+])
+
+punk_board = Pedalboard([
+    HighpassFilter(120),
+    Distortion(drive_db=30),
+    Gain(gain_db=5),
+    Convolution("irs/punk_ir.wav")
+])
+
+bossa_board = Pedalboard([
+    Gain(gain_db=8),
+    Chorus(rate_hz=0.6, depth=1.0),
+    Reverb(room_size=0.9, damping=0.2, wet_level=0.65, dry_level=0.4),
+    LowpassFilter(8000),
+    Convolution("irs/shoegaze_ir.wav")
+])
+
+# metal_board = Pedalboard([
+#     HighpassFilter(140),
+#     Gain(gain_db=12),
+#     Distortion(drive_db=45),
+#     LowpassFilter(9000),
+#     Convolution("irs/mesa_4x12.wav")
+# ])
+
+# connect genre names → boards
+effect_chains = {
+    "doom": doom_board,
+    "punk": punk_board,
+    "bossa_nova": bossa_board,
+    # "metal": metal_board
+}
+
 
 # konfig
 app = Flask(__name__)
@@ -25,10 +69,10 @@ clf = joblib.load("genre_classifier.pkl")
 
 # global state
 processing_state = {
-    "current_genre": None,
+    "current_genre": " ",
     "level": 0.0,
     "live_mode": False,
-    "last_file_result": None
+    "last_file_result": {"genre" : " " }
 }
 
 q = queue.Queue(maxsize=40)
@@ -108,7 +152,21 @@ def audio_callback(indata, outdata, frames, time_info, status):
         except queue.Full:
             pass
 
-    outdata[:] = indata  # passthrough monitoring
+    # outdata[:] = indata  # passthrough monitoring
+    genre = processing_state["current_genre"]
+
+    if processing_state["live_mode"] and genre in effect_chains:
+        chain = effect_chains[genre]
+        try:
+            processed = chain(indata.copy(), SR)
+            outdata[:] = processed
+        except Exception as e:
+            print("Effect error:", e)
+            outdata[:] = indata
+    else:
+        outdata[:] = indata
+        
+
 
 def start_audio():
     global stream
@@ -133,8 +191,10 @@ def enable_live():
 @app.post("/disable_live")
 def disable_live():
     processing_state["live_mode"] = False
-    processing_state["current_genre"] = None
-    return jsonify({"ok": True})
+    processing_state["current_genre"] = " "
+    processing_state["level"] = 0.0
+    # result = {"genre": " "}
+    return jsonify(processing_state)
 
 @app.post("/classify_file")
 def classify_file():
