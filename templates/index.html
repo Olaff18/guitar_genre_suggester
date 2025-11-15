@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Genre Suggester</title>
+<style>
+body {
+    background: #0a0a0a;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+.card {
+    margin: 50px auto;
+    padding: 30px;
+    border-radius: 18px;
+    width: 450px;
+    background: #111;
+    box-shadow: 0 0 40px rgba(0,0,0,0.6);
+}
+.genre {
+    font-size: 42px;
+    margin-top: 20px;
+}
+.levelbar {
+    width: 100%;
+    height: 20px;
+    background: #333;
+    border-radius: 12px;
+    margin-top: 20px;
+}
+.level {
+    height: 100%;
+    width: 0%;
+    background: #00eaff;
+    border-radius: 12px;
+}
+button {
+    margin: 10px;
+    padding: 10px 20px;
+    background: #222;
+    color: white;
+    border-radius: 10px;
+    border: 1px solid #555;
+    cursor: pointer;
+}
+button:hover { background: #333; }
+</style>
+</head>
+<body>
+
+<div class="card">
+    <h1>Genre Suggester</h1>
+
+    <button onclick="startLive()">Start Live Guitar Mode</button>
+    <button onclick="stopLive()">Stop Live Mode</button>
+
+    <div class="genre" id="genre">Live: </div>
+
+    <div class="levelbar">
+        <div class="level" id="level"></div>
+    </div>
+
+    <hr style="margin: 30px 0; border-color:#333;">
+
+    <h2>Upload MP3/WAV to Classify</h2>
+    <input type="file" id="fileUpload" accept=".mp3,.wav"/>
+    <button onclick="uploadFile()">Classify File</button>
+
+    <div class="genre" id="fileResult">File: —</div>
+</div>
+
+<script>
+function startLive() {
+    fetch("/enable_live", {method:"POST"});
+}
+function stopLive() {
+    fetch("/disable_live", {method:"POST"});
+}
+
+function uploadFile() {
+    let f = document.getElementById("fileUpload").files[0];
+    if (!f) return alert("Pick a file!");
+
+    let fd = new FormData();
+    fd.append("audio", f);
+
+    fetch("/classify_file", {
+        method: "POST",
+        body: fd
+    })
+    .then(r => r.json())
+    .then(res => {
+        document.getElementById("fileResult").innerText = "File: " + res.genre;
+    });
+}
+
+function updateUI() {
+    fetch("/state")
+        .then(r => r.json())
+        .then(state => {
+            document.getElementById("genre").innerText =
+                "Live: " + (state.current_genre || "—");
+
+            let lvl = Math.min(100, state.level * 300);
+            document.getElementById("level").style.width = lvl + "%";
+
+            if (state.last_file_result)
+                document.getElementById("fileResult").innerText =
+                    "File: " + state.last_file_result.genre;
+        });
+}
+
+setInterval(updateUI, 150);
+</script>
+
+</body>
+</html>

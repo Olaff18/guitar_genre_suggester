@@ -9,61 +9,7 @@ import scipy.signal
 import PySimpleGUI  as sg
 import librosa
 
-# probujemy zimportowac nam model
-from pedalboard import Pedalboard, VST3Plugin
 
-VST_PATH = r"C:\Program Files\Common Files\VST3\NeuralAmpModeler.vst3"
-# NAM_MODEL = r"C:\path\to\your\model.nam"
-
-def create_nam_instance(model_path):
-    try:
-        plugin = VST3Plugin(VST_PATH)
-
-        # Load the NAM model by setting the parameter, OR loading plugin state.
-        # First check if the parameter exists:
-        if "ModelPath" in plugin.parameters:
-            plugin.parameters["ModelPath"] = model_path
-            print("Loaded NAM model into VST:", model_path)
-        else:
-            print("⚠ NAM plugin does not expose ModelPath parameter. Trying load_state...")
-            try:
-                with open(model_path, "rb") as f:
-                    data = f.read()
-                plugin.load_state(data)
-                print("Loaded model via load_state()")
-            except Exception as e:
-                print("FAILED to load model:", e)
-
-        return plugin
-
-    except Exception as e:
-        print("NAM VST load error:", e)
-        return None
-
-
-class NAMWrapper:
-    def __init__(self):
-        self.plugin = None
-
-    def load(self, path):
-        if path is None:
-            self.plugin = None
-            return
-
-        self.plugin = create_nam_instance(path)
-
-    def process(self, audio_block):
-        if self.plugin is None:
-            return audio_block
-
-        try:
-            # pedalboard wants shape: (samples, channels)
-            block = audio_block.astype(np.float32).reshape(-1, 1)
-            out = self.plugin.process(block, SR)
-            return out.flatten()
-        except Exception as e:
-            print("NAM processing failed:", e)
-            return audio_block
 
 
 SR = 44100
@@ -71,20 +17,6 @@ BLOCK = 2048             # block size for callback
 CLASSIFY_WINDOW = 1.0    # seconds for feature extraction
 CHANNELS = 1
 
-MODELS_DIR = "models"
-IRS_DIR = "irs"
-MODEL_FILES = {
-    "metal": os.path.join(MODELS_DIR, "metal.nam"),
-    "shoegaze": os.path.join(MODELS_DIR, "shoegaze.nam"),
-    "punk": os.path.join(MODELS_DIR, "punk.nam"),
-    "doom": os.path.join(MODELS_DIR, "doom.nam"),
-}
-IR_FILES = {
-    "metal": os.path.join(IRS_DIR, "metal_ir.wav"),
-    "shoegaze": os.path.join(IRS_DIR, "shoegaze_ir.wav"),
-    "punk": os.path.join(IRS_DIR, "punk_ir.wav"),
-    "doom": os.path.join(IRS_DIR, "doom_ir.wav"),
-}
 
 # load classifier
 CLASSIFIER_PATH = "genre_classifier.pkl"
@@ -97,65 +29,69 @@ q = queue.Queue(maxsize=20)
 
 # lightweight feature extraction
 def extract_features_block(block, sr=SR):
-    y = block.flatten()
-    if len(y) < 256:
-        # pad
-        y = np.pad(y, (0, max(0, 256-len(y))))
-    centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
-    rms = np.mean(librosa.feature.rms(y=y))
-    zcr = np.mean(librosa.feature.zero_crossing_rate(y=y))
-    bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=y, sr=sr))
-    return [centroid, rms, zcr, bandwidth]
+    y = block.flatten().astype(np.float32)
 
-# simple IR loader (loads wav, returns normalized numpy)
-import scipy.io.wavfile as wavfile
-def load_ir(path):
-    if not os.path.exists(path):
+    if y.size == 0:
         return None
-    sr, data = wavfile.read(path)
-    # resample if needed
-    if sr != SR:
-        data = librosa.resample(data.astype(float), orig_sr=sr, target_sr=SR)
-    # mono
-    if data.ndim > 1:
-        data = np.mean(data, axis=1)
-    data = data.astype(np.float32)
-    # normalize
-    if np.max(np.abs(data)) > 0:
-        data = data / np.max(np.abs(data))
-    return data
 
-# setup initial IRs dict
-irs = {k: load_ir(v) for k, v in IR_FILES.items()}
+    # Ensure min length to avoid librosa crashes
+    if len(y) < 2048:
+        y = np.pad(y, (0, 2048 - len(y)))
 
-# NAM model holder ; maly wrapper
-class NAMWrapper:
-    def __init__(self):
-        self.model = None
-    def load(self, path):
-        if not NAM_AVAILABLE:
-            print("NAM not available; skipping load")
-            self.model = None
-            return
-        
-        try:
-            # self.model = NeuralAmpModel.load(path)
-            print("Loaded NAM model", path)
-        except Exception as e:
-            print("Error loading NAM model:", e)
-            self.model = None
-    def process(self, audio_block):
-        if self.model is None:
-            return audio_block
-        
-        try:
-            out = self.model(audio_block.astype(np.float32))
-            return out
-        except Exception as e:
-            print("NAM processing failed:", e)
-            return audio_block
+    # -----------------------------
+    # BASIC FEATURES (3 stats each)
+    # -----------------------------
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+    rms = librosa.feature.rms(y=y)[0]
+    zcr = librosa.feature.zero_crossing_rate(y=y)[0]
+    bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)[0]
 
-nam_wrapper = NAMWrapper()
+    # take multiple statistics, not just mean
+    def stats(x):
+        return [np.mean(x), np.std(x), np.median(x)]
+
+    feat_centroid = stats(centroid)
+    feat_rms = stats(rms)
+    feat_zcr = stats(zcr)
+    feat_bandwidth = stats(bandwidth)
+
+    # -----------------------------
+    # MFCCs (13 coefficients)
+    # -----------------------------
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfcc_means = np.mean(mfcc, axis=1)
+    mfcc_stds = np.std(mfcc, axis=1)
+
+    # -----------------------------
+    # Spectral Contrast (7 bands)
+    # -----------------------------
+    contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
+    contrast_means = np.mean(contrast, axis=1)
+
+    # -----------------------------
+    # Rolloff (shape of spectrum)
+    # -----------------------------
+    rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
+    feat_rolloff = stats(rolloff)
+
+    # -----------------------------
+    # FINAL FEATURE VECTOR
+    # -----------------------------
+    final_features = np.concatenate([
+        feat_centroid,
+        feat_rms,
+        feat_zcr,
+        feat_bandwidth,
+        mfcc_means,
+        mfcc_stds,
+        contrast_means,
+        feat_rolloff
+    ])
+
+    return final_features
+
+
+
 
 # convolution helper using FFT-based overlap-add 
 def fft_convolve_block(signal_block, ir):
@@ -190,27 +126,9 @@ def processing_thread(out_queue):
         genre = clf.predict([feat])[0]
         if genre != processing_state["current_genre"]:
             processing_state["current_genre"] = genre
-            # load NAM and IR
-            model_path = MODEL_FILES.get(genre)
-            ir_path = IR_FILES.get(genre)
-            if model_path and os.path.exists(model_path):
-                nam_wrapper.load(model_path)
-            else:
-                print("NAM model missing for", genre)
-                nam_wrapper.load(None)
-            ir = irs.get(genre)
-            processing_state["current_ir"] = ir
+            
             print(f"Switched to {genre}")
-        # process: NAM -> IR
-        # run NAM on the block
-        processed = nam_wrapper.process(block.flatten())
-        # if NAM returned shorter/longer arrays, ensure same length
-        if processed is None or len(processed) != len(block.flatten()):
-            processed = block.flatten()
-        # apply IR via convolution
-        out_block = fft_convolve_block(processed, processing_state["current_ir"])
-        # push to out_queue for callback to read (we use a simple queue)
-        out_queue.put(out_block.astype(np.float32))
+        
 
 # GUI + audio callback logic
 def main():
