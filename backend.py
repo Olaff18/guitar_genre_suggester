@@ -14,27 +14,32 @@ from pedalboard import Pedalboard, Distortion, Gain, Reverb, LowpassFilter, High
 # -------- EFFECT BOARDS --------
 
 doom_board = Pedalboard([
-    HighpassFilter(70),
-    Distortion(drive_db=40),
-    Gain(gain_db=15),
-    LowpassFilter(3000),
-    Convolution("irs/doom_ir.wav")
-])
-
-punk_board = Pedalboard([
-    HighpassFilter(120),
-    Distortion(drive_db=30),
-    Gain(gain_db=5),
+    HighpassFilter(85),                   # tight low end
+    Distortion(drive_db=30),              # Marshall-ish crunch
+    Gain(gain_db=8),                      # boost but not too much
+    LowpassFilter(7500),                  # punk has bite but not fizz
     Convolution("irs/punk_ir.wav")
 ])
 
-bossa_board = Pedalboard([
-    Gain(gain_db=8),
-    Chorus(rate_hz=0.6, depth=1.0),
-    Reverb(room_size=0.9, damping=0.2, wet_level=0.65, dry_level=0.4),
-    LowpassFilter(8000),
-    Convolution("irs/shoegaze_ir.wav")
+
+punk_board = Pedalboard([
+    HighpassFilter(90),                   # tight low end
+    Distortion(drive_db=28),              # Marshall-ish crunch
+    Gain(gain_db=6),                      # boost but not too much
+    LowpassFilter(7500),                  # punk has bite but not fizz
+    Convolution("irs/punk_ir.wav")
 ])
+
+
+bossa_board = Pedalboard([
+    HighpassFilter(120),                 
+    Gain(gain_db=1),                      # small boost = warmth
+    # Chorus(rate_hz=1.0, depth=0.4),       # soft jazz chorus (not 80s)
+    # Reverb(room_size=0.85, damping=0.25, wet_level=0.55),
+    LowpassFilter(9000),                  # warm mellow tone
+    Convolution("irs/bossa_ir.wav")      # warm clean cab IR
+])
+
 
 effect_chains = {
     "doom": doom_board,
