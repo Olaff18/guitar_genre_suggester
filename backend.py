@@ -11,6 +11,7 @@ import joblib
 import librosa
 from pedalboard import Pedalboard, Distortion, Gain, Reverb, LowpassFilter, HighpassFilter, Convolution, Chorus
 
+CLASSIFY_WINDOW = 3.0
 # -------- EFFECT BOARDS --------
 
 doom_board = Pedalboard([
@@ -54,11 +55,12 @@ app = Flask(__name__)
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 SR = 44100
-BLOCK = 2048
-CLASSIFY_WINDOW = 1.0
+BLOCK = 512
+CLASSIFY_WINDOW = 3.0
 CHANNELS = 1
 
 clf = joblib.load("genre_classifier.pkl")
+scaler = joblib.load("genre_scaler.pkl")
 
 # global state
 processing_state = {
@@ -80,7 +82,15 @@ q = queue.Queue(maxsize=40)
 
 # -------- FEATURE EXTRACTION --------
 def extract_features_block(block, sr=SR):
+
     y = block.flatten().astype(np.float32)
+
+    if np.max(np.abs(y)) < 0.005:  # too silent
+        return None 
+    
+    y = librosa.util.normalize(y) # normalizacja glośności zeby nie bylo za cicho lub za glosno
+    
+
     if y.size == 0:
         return None
     
@@ -88,7 +98,7 @@ def extract_features_block(block, sr=SR):
         y = np.pad(y, (0, 2048 - len(y)))
 
     def stats(x):
-        return [np.mean(x), np.std(x), np.median(x)]
+        return [np.mean(x), np.std(x)]
 
     centroid = stats(librosa.feature.spectral_centroid(y=y, sr=sr)[0])
     rms = stats(librosa.feature.rms(y=y)[0])
@@ -114,7 +124,8 @@ def extract_features_block(block, sr=SR):
 
 # -------- BACKGROUND CLASSIFIER THREAD --------
 def processing_thread():
-    buffer = np.zeros(int(SR * CLASSIFY_WINDOW), dtype=np.float32)
+    buffer_length = int(SR * CLASSIFY_WINDOW) # Holds 3 seconds
+    buffer = np.zeros(buffer_length, dtype=np.float32)
 
     while True:
         block = q.get()
@@ -124,18 +135,30 @@ def processing_thread():
         if not processing_state["live_mode"]:
             continue
 
-        buffer = np.concatenate([buffer[len(block):], block.flatten()])
-        feat = extract_features_block(buffer)
+        # ahift the array to the left, add new block on the right
+        # this allows us to always analyze the "last 3 seconds"
+        buffer = np.roll(buffer, -len(block))
+        buffer[-len(block):] = block.flatten()       
 
-        try:
-            genre = clf.predict([feat])[0]
-            processing_state["current_genre"] = genre
+        # Only run prediction logic if we are in the "Collecting" phase
+        if processing_state["collecting"]:
+            
+            # We only predict periodically to save CPU, or every block?
+            # Every block is fine with Random Forest
+            feat = extract_features_block(buffer)
 
-            if processing_state["collecting"]:
-                recognition_buffer.append(genre)
-
-        except:
-            pass
+            if feat is not None:
+                try:
+                    # ---  APPLY SCALER ---
+                    # Wwe must translate the live features using the saved scaler
+                    feat_reshaped = feat.reshape(1, -1)
+                    feat_scaled = scaler.transform(feat_reshaped)
+                    
+                    genre = clf.predict(feat_scaled)[0]
+                    processing_state["current_genre"] = genre
+                    recognition_buffer.append(genre)
+                except Exception as e:
+                    print(f"Pred Error: {e}")
 
         rms_val = np.sqrt(np.mean(buffer**2))
         processing_state["level"] = float(rms_val)
@@ -175,6 +198,7 @@ def start_audio():
         return
     stream = sd.Stream(
         samplerate=SR,
+        # device = 'ASIO4ALL',
         blocksize=BLOCK,
         channels=CHANNELS,
         callback=audio_callback

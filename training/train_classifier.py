@@ -8,6 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 import joblib # do zapisywania modelu
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.preprocessing import StandardScaler # <--- NEW: Important for accuracy
 
 
 SR = 44100 # sample rate 44.1 kHz klasyczne CD quality 
@@ -20,16 +21,43 @@ def record_clip(filename, seconds=DURATION):
     print(f"Rcording {filename} for {seconds} seconds (clean, no effects)")
     audio = sd.rec(int(seconds * SR), samplerate=SR, channels=1, dtype='float32')
     sd.wait() # blokuje do konca nagrania   
-    np.save(filename, audio) # zapisuje nagranie jako plik .npy
+    np.save(filename, audio) # zapisuje nagranie jako plik .npy 
     print(f"Saved recording to {filename}")
 
+# --- 2. NEW: SLICING FUNCTION ---
+# this turns 1 file into 10+ training examples
+def slice_audio(audio, sr, chunk_len=3.0, overlap=2.5):
+    # chunk_len = 3.0 : enough time to hear the "Silence between notes"
+    # overlap = 2.5   : we step forward only 0.5s at a time to get MORE data
+    n_samples = int(chunk_len * sr)
+    step = int((chunk_len - overlap) * sr)
+    
+    slices = []
+    for i in range(0, len(audio) - n_samples, step):
+        chunk = audio[i : i + n_samples]
 
+        # --- SAFETY GATE ---
+        # only throw away the slice if it's dead silent (e.g. mic not plugged in, or start of file)
+        # if it's a "musical break" (rms 0.01), we KEEP it because it's part of the genre.
+        rms = np.sqrt(np.mean(chunk**2))
+        if rms < 0.005: 
+            continue 
+
+        slices.append(chunk)
+    return slices
 
 # bierze .npy (raw waveform) i zamienia w zbiory cyferek reprezentujace dzwieki
 def extract_features_np(audio_np, sr=SR):
     y = audio_np.flatten().astype(np.float32)
 
-    if y.size == 0:
+    # we normalize here so quiet Bossa isn't ignored
+    # we use a small noise gate (0.005) to avoid boosting silence
+    if np.max(np.abs(y)) < 0.005:
+        return None
+        
+    y = librosa.util.normalize(y) 
+
+    if y.size == 0: # sprawdzamy czy cos jest w nagraniu
         return None
 
     #  min length to avoid librosa crashes
@@ -45,7 +73,7 @@ def extract_features_np(audio_np, sr=SR):
 
     # rozne statistics oprocz mean
     def stats(x):
-        return [np.mean(x), np.std(x), np.median(x)]
+        return [np.mean(x), np.std(x)] # removed median to save speed, mean/std is usually enough
 
     feat_centroid = stats(centroid)
     feat_rms = stats(rms)
@@ -97,31 +125,43 @@ def collect_samples():
 def train():
     X, y = [], []  # X to cechy, y to etykiety gatunkow
     for g in GENRES:
-        for f in glob.glob(f"{OUT}/{g}_*.npy"):
-            audio = np.load(f)
-            feat = extract_features_np(audio, SR)
-            if feat is None:
-                continue
-            X.append(feat)
-            y.append(g)
+        files = glob.glob(f"{OUT}/{g}_*.npy")
+        print(f"Processing {g}: {len(files)} files found.")
+
+        for f in files:
+            full_audio = np.load(f)
+            # instead of extracting features from the whole 5s file,
+            # we slice it into many 1s windows
+            slices = slice_audio(full_audio, SR, chunk_len=1.0, overlap=0.5)
+            for s in slices:
+                feat = extract_features_np(s, SR)
+                if feat is not None:
+                    X.append(feat)
+                    y.append(g)
 
     X = np.array(X)
     y = np.array(y)
 
+    print(f"\nTotal Training Samples Created: {len(X)}")
+
     # ------------------------
     # TRAIN/TEST SPLIT
     # ------------------------
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42, stratify=y
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    clf = RandomForestClassifier(n_estimators=100, random_state=0)
-    clf.fit(X_train, y_train)
+    # --- NEW: SCALING ---
+    # helps Random Forest differentiate between tiny ZCR numbers and huge Centroid numbers
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    clf = RandomForestClassifier(n_estimators=200, max_depth=20, random_state=42)
+    clf.fit(X_train_scaled, y_train)
 
     # ------------------------
     # EVALUATION
     # ------------------------
-    y_pred = clf.predict(X_test)
+    y_pred = clf.predict(X_test_scaled)
 
     acc = accuracy_score(y_test, y_pred)
     print("\n=== ACCURACY ===")
@@ -134,7 +174,9 @@ def train():
     print(confusion_matrix(y_test, y_pred))
 
     joblib.dump(clf, "genre_classifier.pkl")
-    print("zapisujemy model do pliku genre_classifier.pkl")
+    joblib.dump(scaler, "genre_scaler.pkl")
+    print("\nModel and Scaler saved!")
+    print("zapisujemy model do pliku genre_classifier.pkl i skaler w genre_scaler.pkl")
 
 
 if __name__ == "__main__":
