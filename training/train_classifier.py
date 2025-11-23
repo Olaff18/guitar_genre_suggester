@@ -9,11 +9,12 @@ import joblib # do zapisywania modelu
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.preprocessing import StandardScaler # <--- NEW: Important for accuracy
+from sklearn.model_selection import GroupShuffleSplit # <--- NEW: for group-based splitting
 
 
 SR = 44100 # sample rate 44.1 kHz klasyczne CD quality 
 DURATION = 5.0 # 5 sekund na klip
-GENRES = ['bossa_nova', 'punk', 'doom', 'barok']
+GENRES = ['bossa', 'punk', 'doom', 'noise']
 OUT = "training_data" # folder do zapisywania danych treningowych
 os.makedirs(OUT, exist_ok=True) # jakby nie istnial folder ale istnieje
 
@@ -29,19 +30,13 @@ def record_clip(filename, seconds=DURATION):
 def slice_audio(audio, sr, chunk_len=3.0, overlap=2.5):
     # chunk_len = 3.0 : enough time to hear the "Silence between notes"
     # overlap = 2.5   : we step forward only 0.5s at a time to get MORE data
-    n_samples = int(chunk_len * sr)
+    n_samples = int(chunk_len * sr)   
     step = int((chunk_len - overlap) * sr)
     
     slices = []
     for i in range(0, len(audio) - n_samples, step):
         chunk = audio[i : i + n_samples]
-
-        # --- SAFETY GATE ---
-        # only throw away the slice if it's dead silent (e.g. mic not plugged in, or start of file)
-        # if it's a "musical break" (rms 0.01), we KEEP it because it's part of the genre.
-        rms = np.sqrt(np.mean(chunk**2))
-        if rms < 0.005: 
-            continue 
+        if len(chunk) == 0: continue
 
         slices.append(chunk)
     return slices
@@ -57,8 +52,6 @@ def extract_features_np(audio_np, sr=SR):
         
     y = librosa.util.normalize(y) 
 
-    if y.size == 0: # sprawdzamy czy cos jest w nagraniu
-        return None
 
     #  min length to avoid librosa crashes
     if len(y) < 2048:
@@ -123,16 +116,24 @@ def collect_samples():
             time.sleep(0.5)
 
 def train():
-    X, y = [], []  # X to cechy, y to etykiety gatunkow
+    print("Processing data...")
+    X, y = [], []
+    
     for g in GENRES:
-        files = glob.glob(f"{OUT}/{g}_*.npy")
+        # Matches bossa_long.npy, noise_long.npy (or noise_0.npy)
+        # We use * to be flexible with names
+        files = glob.glob(f"{OUT}/{g}_long.npy")
         print(f"Processing {g}: {len(files)} files found.")
+        
+        if len(files) == 0:
+            print(f"WARNING: No files found for '{g}'! Check folder/names.")
 
         for f in files:
             full_audio = np.load(f)
-            # instead of extracting features from the whole 5s file,
-            # we slice it into many 1s windows
-            slices = slice_audio(full_audio, SR, chunk_len=1.0, overlap=0.5)
+            
+            # Use 3.0s chunks with high overlap
+            slices = slice_audio(full_audio, SR, chunk_len=3.0, overlap=2.5)
+            
             for s in slices:
                 feat = extract_features_np(s, SR)
                 if feat is not None:
@@ -141,42 +142,33 @@ def train():
 
     X = np.array(X)
     y = np.array(y)
+    
+    print(f"\nTotal Training Samples: {len(X)}")
 
-    print(f"\nTotal Training Samples Created: {len(X)}")
-
-    # ------------------------
-    # TRAIN/TEST SPLIT
-    # ------------------------
+    # --- 3. SPLITTING (Switched back to standard split) ---
+    # Since we have 1 long varied file per genre, we split the SLICES randomly.
+    # GroupShuffleSplit is not possible with only 1 file per genre.
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    # --- NEW: SCALING ---
-    # helps Random Forest differentiate between tiny ZCR numbers and huge Centroid numbers
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    clf = RandomForestClassifier(n_estimators=200, max_depth=20, random_state=42)
+    # Increased depth slightly to handle more complex variations in long files
+    clf = RandomForestClassifier(n_estimators=200, max_depth=25, random_state=42)
     clf.fit(X_train_scaled, y_train)
 
-    # ------------------------
-    # EVALUATION
-    # ------------------------
     y_pred = clf.predict(X_test_scaled)
 
     acc = accuracy_score(y_test, y_pred)
     print("\n=== ACCURACY ===")
     print(f"{acc*100:.2f}%")
-
-    print("\n=== CLASSIFICATION REPORT ===")
-    print(classification_report(y_test, y_pred))
-
-    print("\n=== CONFUSION MATRIX ===")
     print(confusion_matrix(y_test, y_pred))
+    print(classification_report(y_test, y_pred))
 
     joblib.dump(clf, "genre_classifier.pkl")
     joblib.dump(scaler, "genre_scaler.pkl")
     print("\nModel and Scaler saved!")
-    print("zapisujemy model do pliku genre_classifier.pkl i skaler w genre_scaler.pkl")
 
 
 if __name__ == "__main__":

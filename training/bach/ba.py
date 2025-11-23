@@ -33,27 +33,38 @@ barok5 = "barokdata/barok_5.npy"
 
 
 
-a1 = wave.open("doom_1.wav")
-a2 = wave.open("doom_2.wav")
-a3 = wave.open("doom_3.wav")
-a4 = wave.open("doom_4.wav")
-a5 = wave.open("doom_5.wav")
-a6 = wave.open("doom_6.wav")
-a7 = wave.open("doom_7.wav")
-a8 = wave.open("doom_8.wav")
-a9 = wave.open("doom_9.wav")
-a10 = wave.open("doom_10.wav")
+# a1 = wave.open("doom_1.wav")
+# a2 = wave.open("doom_2.wav")
+# a3 = wave.open("doom_3.wav")
+# a4 = wave.open("doom_4.wav")
+# a5 = wave.open("doom_5.wav")
+# a6 = wave.open("doom_6.wav")
+# a7 = wave.open("doom_7.wav")
+# a8 = wave.open("doom_8.wav")
+# a9 = wave.open("doom_9.wav")
+# a10 = wave.open("doom_10.wav")
 
-b1 = "training_data/doom_1.npy"
-b2 = "training_data/doom_2.npy"
-b3 = "training_data/doom_3.npy"
-b4 = "training_data/doom_4.npy"
-b5 = "training_data/doom_5.npy"
-b6 = "training_data/doom_6.npy"
-b7 = "training_data/doom_7.npy"
-b8 = "training_data/doom_8.npy"
-b9 = "training_data/doom_9.npy"
-b10 = "training_data/doom_10.npy"
+a11 = wave.open("doom_long.wav")
+a12 = wave.open("bossa_long.wav")
+a13 = wave.open("punk_long.wav")
+a14 = wave.open("noise.wav")
+
+# b1 = "training_data/doom_1.npy"
+# b2 = "training_data/doom_2.npy"
+# b3 = "training_data/doom_3.npy"
+# b4 = "training_data/doom_4.npy"
+# b5 = "training_data/doom_5.npy"
+# b6 = "training_data/doom_6.npy"
+# b7 = "training_data/doom_7.npy"
+# b8 = "training_data/doom_8.npy"
+# b9 = "training_data/doom_9.npy"
+# b10 = "training_data/doom_10.npy"
+
+b11 = "training_data/doom_long.npy"
+b12 = "training_data/bossa_long.npy"
+b13  = "training_data/punk_long.npy"
+b14 = "training_data/noise.npy"
+
 
 
 c1 = wave.open("punk_1.wav")
@@ -81,11 +92,11 @@ d10 = "training_data/punk_10.npy"
 
 
 
-np.save(barok1, np.frombuffer(audio1.readframes(audio1.getnframes()), dtype=np.int16))
-np.save(barok2, np.frombuffer(audio2.readframes(audio2.getnframes()), dtype=np.int16))
-np.save(barok3, np.frombuffer(audio3.readframes(audio3.getnframes()), dtype=np.int16))
-np.save(barok4, np.frombuffer(audio4.readframes(audio4.getnframes()), dtype=np.int16))
-np.save(barok5, np.frombuffer(audio5.readframes(audio5.getnframes()), dtype=np.int16))
+# np.save(barok1, np.frombuffer(audio1.readframes(audio1.getnframes()), dtype=np.int16))
+# np.save(barok2, np.frombuffer(audio2.readframes(audio2.getnframes()), dtype=np.int16))
+# np.save(barok3, np.frombuffer(audio3.readframes(audio3.getnframes()), dtype=np.int16))
+# np.save(barok4, np.frombuffer(audio4.readframes(audio4.getnframes()), dtype=np.int16))
+# np.save(barok5, np.frombuffer(audio5.readframes(audio5.getnframes()), dtype=np.int16))
 
 
 # np.save(b1, np.frombuffer(a1.readframes(a1.getnframes()), dtype=np.int16))
@@ -99,6 +110,11 @@ np.save(barok5, np.frombuffer(audio5.readframes(audio5.getnframes()), dtype=np.i
 # np.save(b9, np.frombuffer(a9.readframes(a9.getnframes()), dtype=np.int16))
 # np.save(b10, np.frombuffer(a10.readframes(a10.getnframes()), dtype=np.int16))
 
+np.save(b11, np.frombuffer(a11.readframes(a11.getnframes()), dtype=np.int16))
+np.save(b12, np.frombuffer(a12.readframes(a12.getnframes()), dtype=np.int16))
+np.save(b13, np.frombuffer(a13.readframes(a13.getnframes()), dtype=np.int16))
+np.save(b14, np.frombuffer(a14.readframes(a14.getnframes()), dtype=np.int16))
+
 # np.save(d1, np.frombuffer(c1.readframes(c1.getnframes()), dtype=np.int16))
 # np.save(d2, np.frombuffer(c2.readframes(c2.getnframes()), dtype=np.int16))
 # np.save(d3, np.frombuffer(c3.readframes(c3.getnframes()), dtype=np.int16))
@@ -110,3 +126,5 @@ np.save(barok5, np.frombuffer(audio5.readframes(audio5.getnframes()), dtype=np.i
 # np.save(d9, np.frombuffer(c9.readframes(c9.getnframes()), dtype=np.int16))
 # np.save(d10, np.frombuffer(c10.readframes(c10.getnframes()), dtype=np.int16))
 # np.save(filename, audio) # zapisuje nagranie jako plik .npy
+
+
